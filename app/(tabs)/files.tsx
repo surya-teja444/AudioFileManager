@@ -2,8 +2,10 @@ import FileCard from "@/components/FileCard";
 import { FontAwesome } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Video } from "expo-av";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
@@ -17,7 +19,6 @@ import {
 } from "react-native";
 import * as Mime from "react-native-mime-types";
 import { FAB } from "react-native-paper";
-import { WebView } from "react-native-webview";
 
 interface FileItem {
   id: string;
@@ -37,27 +38,72 @@ export default function FilesScreen() {
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: true,
-      aspect: [4, 3],
+      allowsEditing: false,
       quality: 1,
       base64: true,
     });
 
     if (!result.canceled) {
       const asset = result.assets[0];
+      const mimeType =
+        asset.type === "video"
+          ? "video/mp4"
+          : asset.type === "image"
+          ? "image/jpeg"
+          : "application/octet-stream";
+
       const newFile: FileItem = {
         id: Date.now().toString(),
         uri: asset.uri,
-        name: asset.fileName || `Document ${files.length + 1}`,
-        type: asset.type || "image",
+        name: asset.fileName || `Media_${files.length + 1}`,
+        type: mimeType,
         date: new Date().toISOString(),
         base64: asset.base64 || "",
       };
 
       const updated = [newFile, ...files];
       setFiles(updated);
-      setModalVisible(false);
       await AsyncStorage.setItem("files", JSON.stringify(updated));
+      setModalVisible(false);
+    }
+  };
+
+  const pickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      setIsUploading(true);
+
+      const asset = result.assets[0];
+      const mimeType =
+        asset.mimeType || Mime.lookup(asset.name) || "application/octet-stream";
+
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const newFile: FileItem = {
+        id: Date.now().toString(),
+        uri: asset.uri,
+        name: asset.name || `Document_${files.length + 1}`,
+        type: mimeType,
+        date: new Date().toISOString(),
+        base64: base64,
+      };
+
+      const updated = [newFile, ...files];
+      setFiles(updated);
+      await AsyncStorage.setItem("files", JSON.stringify(updated));
+      setModalVisible(false);
+    } catch (error) {
+      console.error("Error reading document:", error);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -81,8 +127,10 @@ export default function FilesScreen() {
 
   const renderPreview = (file: FileItem) => {
     const base64Uri = getBase64Uri(file);
-    const mime = Mime.lookup(file.name) || "";
-
+    console.log("file.uri", file.uri);
+    const mime = Mime.lookup(file.name) || file.type || "";
+    console.log("base64Uri", base64Uri);
+    console.log("mime", mime);
     if (mime.startsWith("image/")) {
       return (
         <Image
@@ -94,14 +142,11 @@ export default function FilesScreen() {
     } else if (mime.startsWith("video/")) {
       return (
         <Video
-          source={{ uri: base64Uri }}
+          source={{ uri: file.uri }}
           useNativeControls
-          // resizeMode="contain"
           style={styles.previewVideo}
         />
       );
-    } else if (mime === "application/pdf") {
-      return <WebView source={{ uri: base64Uri }} style={styles.webview} />;
     } else {
       return (
         <View style={styles.unsupportedBox}>
@@ -158,7 +203,13 @@ export default function FilesScreen() {
               style={[styles.browseButton, { marginTop: 10 }]}
               onPress={pickImage}
             >
-              <Text style={styles.browseText}>Pick Image</Text>
+              <Text style={styles.browseText}>Pick Image/Video</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.browseButton, { marginTop: 10 }]}
+              onPress={pickDocument}
+            >
+              <Text style={styles.browseText}>Pick PDF</Text>
             </TouchableOpacity>
             {isUploading && (
               <View style={styles.uploadingBox}>
@@ -180,6 +231,13 @@ const styles = StyleSheet.create({
     bottom: 80,
     backgroundColor: "#003F88",
   },
+  pdfRenderer: {
+    width: Dimensions.get("window").width - 60,
+    height: 400,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+  },
+
   previewScreen: {
     flex: 1,
     backgroundColor: "#000",
@@ -237,17 +295,5 @@ const styles = StyleSheet.create({
   unsupportedBox: {
     padding: 20,
     alignItems: "center",
-  },
-  backButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: "#003F88",
-    alignSelf: "flex-start",
-    borderRadius: 6,
-  },
-  backText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
   },
 });
